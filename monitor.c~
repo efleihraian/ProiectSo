@@ -1,0 +1,73 @@
+// monitor.c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <string.h>
+#include <fcntl.h>
+
+#define CMD_FILE "comms.txt"
+#define MAX_CMD 256
+
+volatile sig_atomic_t signal_received = 0;
+
+void handle_signal(int sig) {
+    signal_received = 1;
+}
+
+void process_command(const char *cmd) {
+    char buf[MAX_CMD];
+    if (strncmp(cmd, "list_hunts", 10) == 0) {
+        // List directories (assume hunts are directories)
+        system("ls -d */ | cut -f1 -d'/'");
+    } else if (strncmp(cmd, "list_treasures", 14) == 0) {
+        char hunt[64];
+        sscanf(cmd, "list_treasures %63s", hunt);
+        snprintf(buf, sizeof(buf), "./treasure_manager --list %s", hunt);
+        system(buf);
+    } else if (strncmp(cmd, "view_treasure", 13) == 0) {
+        char hunt[64];
+        int id;
+        sscanf(cmd, "view_treasure %63s %d", hunt, &id);
+        snprintf(buf, sizeof(buf), "./treasure_manager --view %s %d", hunt, id);
+        system(buf);
+    } else if (strncmp(cmd, "stop_monitor", 12) == 0) {
+        printf("Monitor exiting...\n");
+        usleep(2000000);  // 2 sec delay
+        exit(0);
+    } else {
+        printf("Unknown command: %s\n", cmd);
+    }
+}
+
+int main() {
+    struct sigaction sa;
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGUSR1, &sa, NULL);
+
+    printf("Monitor running... waiting for commands.\n");
+
+    while (1) {
+        pause(); // wait for signal
+        if (signal_received) {
+            signal_received = 0;
+
+            int fd = open(CMD_FILE, O_RDONLY);
+            if (fd == -1) {
+                perror("open cmd file");
+                continue;
+            }
+
+            char cmd[MAX_CMD] = {0};
+            read(fd, cmd, MAX_CMD - 1);
+            close(fd);
+
+            process_command(cmd);
+        }
+    }
+
+    return 0;
+}

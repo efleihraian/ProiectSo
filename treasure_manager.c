@@ -267,7 +267,9 @@ void remove_treasure(const char *hunt_id, int treasure_id) {
         remove(file_path);
         rename(temp_path, file_path);
     }
-
+    char msg[256];
+    sprintf(msg, "Deleted treasure ID %d by user %s\n", t.treasure_id, t.username);
+    log_operation(hunt_id, msg);
     close(fd);
     close(temp_fd);
 }
