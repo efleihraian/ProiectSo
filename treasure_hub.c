@@ -4,9 +4,39 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <dirent.h>
 
 #define MAX_CMD_LEN 256
 #define CMD_FILE "comms.txt"
+
+void run_score_calculator() {
+    DIR *dir;
+    struct dirent *entry;
+    char path[256];
+
+    dir = opendir("./hunts");
+    if (!dir) {
+        perror("opendir hunts");
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                snprintf(path, sizeof(path)+30, "./calculate_score.sh %s", entry->d_name);
+                execl("/bin/sh", "sh", "-c", path, NULL);
+                perror("execl calculate_score.sh");
+                exit(1);
+            }
+        }
+    }
+
+    closedir(dir);
+
+    // Wait for all children
+    while (wait(NULL) > 0);
+}
 
 int main() {
     char input[MAX_CMD_LEN];
@@ -44,8 +74,11 @@ int main() {
             printf("- list_hunts\n");
             printf("- list_treasures <hunt_id>\n");
             printf("- view_treasure <hunt_id> <treasure_id>\n");
+            printf("- calculate_score\n");
             printf("- stop_monitor\n");
             printf("- exit\n");
+        } else if (strcmp(input, "calculate_score") == 0) {
+            run_score_calculator();
         } else if (strcmp(input, "stop_monitor") == 0) {
             cmd_fp = fopen(CMD_FILE, "w");
             if (cmd_fp) {
@@ -73,7 +106,7 @@ int main() {
             }
             fprintf(cmd_fp, "%s\n", input);
             fclose(cmd_fp);
-            sleep(1); // slight delay for monitor to read
+            sleep(10); // slight delay for monitor to read
         } else {
             printf("Please start the monitor first using 'start_monitor'.\n");
         }

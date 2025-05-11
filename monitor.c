@@ -121,6 +121,7 @@ int main() {
             } else if (strcmp(cmd, "stop_monitor") == 0) {
             	monitor_active=0;
                 printf("Stopping monitor...\n");
+                sleep(5);
                 break;
             } else if (strcmp(cmd, "exit") == 0) {
                 if (monitor_active) {
