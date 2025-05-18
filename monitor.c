@@ -2,139 +2,89 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <dirent.h>
-#include <sys/stat.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 
 #define TMP_FILE "comms.txt"
 #define MAX_LINE 256
-#define MAX_PATH 512
+#define MAX_ARGS 5
 
-typedef struct {
-    int treasure_id;
-    char username[32];
-    float latitude;
-    float longitude;
-    char clue[256];
-    int value;
-} Treasure;
+void run_treasure_manager(char *cmd_line) {
+    char *args[6]; // max 5 args + NULL
+    int arg_count = 0;
 
-void handle_list_hunts() {
-    DIR *dir = opendir(".");
-    if (!dir) {
-        perror("opendir");
-        return;
-    }
+    args[arg_count++] = "./treasure_manager";
 
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-        if (entry->d_type == DT_DIR && strncmp(entry->d_name, ".", 1) != 0 && strcmp(entry->d_name, "..") != 0) {
-            char path[MAX_PATH];
-            snprintf(path, sizeof(path), "%s/treasures.dat", entry->d_name);
-            FILE *fp = fopen(path, "rb");
-            if (!fp) continue;
+    char cmd_copy[MAX_LINE];
+    strncpy(cmd_copy, cmd_line, MAX_LINE);
+    cmd_copy[MAX_LINE - 1] = '\0';
 
-            int count = 0;
-            Treasure t;
-            while (fread(&t, sizeof(Treasure), 1, fp) == 1)
-                count++;
+    char *token = strtok(cmd_copy, " ");
 
-            fclose(fp);
-            printf("Hunt: %s - %d treasures\n", entry->d_name, count);
+    if (strcmp(token, "list_hunts") == 0) {
+        args[arg_count++] = "--list_hunts";
+    } else if (strcmp(token, "list_treasures") == 0) {
+        char *hunt_id = strtok(NULL, " ");
+        if (hunt_id) {
+            args[arg_count++] = "--list";
+            args[arg_count++] = hunt_id;
+        } else {
+            fprintf(stderr, "Err: missing huntID for list_treasures\n");
+            return;
         }
-    }
-
-    closedir(dir);
-}
-
-void handle_list_treasures(const char *hunt_id) {
-    char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s/treasures.dat", hunt_id);
-
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        printf("Hunt '%s' not found or cannot open file.\n", hunt_id);
-        return;
-    }
-
-    Treasure t;
-    while (fread(&t, sizeof(Treasure), 1, fp) == 1) {
-        printf("Treasure ID: %d\n", t.treasure_id);
-    }
-
-    fclose(fp);
-}
-
-void handle_view_treasure(const char *hunt_id, int treasure_id) {
-    char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s/treasures.dat", hunt_id);
-
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        printf("Hunt '%s' not found.\n", hunt_id);
-        return;
-    }
-
-    Treasure t;
-    int found = 0;
-    while (fread(&t, sizeof(Treasure), 1, fp) == 1) {
-        if (t.treasure_id == treasure_id) {
-            printf("Treasure ID: %d\n", t.treasure_id);
-            printf("Username: %s\n", t.username);
-            printf("Latitude: %.2f\n", t.latitude);
-            printf("Longitude: %.2f\n", t.longitude);
-            printf("Clue: %s\n", t.clue);
-            printf("Value: %d\n", t.value);
-            found = 1;
-            break;
+    } else if (strcmp(token, "view_treasure") == 0) {
+        char *hunt_id = strtok(NULL, " ");
+        char *treasure_id = strtok(NULL, " ");
+        if (hunt_id && treasure_id) {
+            args[arg_count++] = "--view";
+            args[arg_count++] = hunt_id;
+            args[arg_count++] = treasure_id;
+        } else {
+            fprintf(stderr, "Err: missing args for view_treasure\n");
+            return;
         }
+    } else {
+        fprintf(stderr, "Unknown command: %s\n", token);
+        return;
     }
 
-    if (!found)
-        printf("Treasure ID %d not found in hunt '%s'.\n", treasure_id, hunt_id);
+    args[arg_count] = NULL;
 
-    fclose(fp);
+    pid_t pid = fork();
+    if (pid == 0) {
+        execvp(args[0], args);
+        perror("execvp failed");
+        exit(1);
+    } else if (pid > 0) {
+        waitpid(pid, NULL, 0);
+    } else {
+        perror("fork failed");
+    }
 }
 
 int main() {
     int monitor_active = 1;
-    while (1) {
+    while (monitor_active) {
         FILE *fp = fopen(TMP_FILE, "r");
         if (!fp) {
             sleep(1);
             continue;
         }
-
         char line[MAX_LINE];
-        if (fgets(line, MAX_LINE, fp)) {
+        if (fgets(line, sizeof(line), fp)) {
             line[strcspn(line, "\n")] = 0;
 
-            char cmd[32], arg1[64], arg2[64];
-            int num_tokens = sscanf(line, "%s %s %s", cmd, arg1, arg2);
-
-            if (strcmp(cmd, "list_hunts") == 0) {
-                handle_list_hunts();
-            } else if (strcmp(cmd, "list_treasures") == 0 && num_tokens == 2) {
-                handle_list_treasures(arg1);
-            } else if (strcmp(cmd, "view_treasure") == 0 && num_tokens == 3) {
-                handle_view_treasure(arg1, atoi(arg2));                        
-            } else if (strcmp(cmd, "stop_monitor") == 0) {
-            	monitor_active=0;
+            if (strcmp(line, "stop_monitor") == 0) {
+                monitor_active = 0;
                 printf("Stopping monitor...\n");
                 sleep(5);
+                fclose(fp);
+                fp = fopen(TMP_FILE, "w");
+                if (fp) fclose(fp);
                 break;
-            } else if (strcmp(cmd, "exit") == 0) {
-                if (monitor_active) {
-                    printf("Cannot exit: Monitor is still active. Please stop it first using 'stop_monitor'.\n");
-                } else {
-                    printf("Exiting program.\n");
-                    break;
-                }
-            } else {
-                printf("Invalid command: %s\n", line);
-            }
+            }		
+            run_treasure_manager(line);
 
-            // Clear the file after reading the command
             fclose(fp);
             fp = fopen(TMP_FILE, "w");
             if (fp) fclose(fp);
@@ -144,6 +94,7 @@ int main() {
 
         sleep(1);
     }
+
     return 0;
 }
 
